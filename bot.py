@@ -239,7 +239,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return BATCH
     elif query.data == "submit_link":
         await query.message.reply_text(
-            "Please enter the name of the job or internship opportunity:"
+            "Please enter:\n \nName of the job or internship opportunity:"
         )
         return JOB_NAME
     else:
@@ -593,7 +593,7 @@ async def job_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["job_name"] = job_name
     
     await update.message.reply_text(
-        "Please enter the link to the job or internship opportunity:"
+        "Please enter:\n \nLink to the job or internship opportunity:"
     )
     return JOB_LINK
 
