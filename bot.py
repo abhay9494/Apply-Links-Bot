@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ─── Required ENV VARs ─────────────────────────────────────────────────────────────
 BOT_TOKEN       = os.getenv("BOT_TOKEN")
-WEBHOOK_URL     = os.getenv("WEBHOOK_URL")       # e.g. "https://yourdomain.com" (no trailing slash)
+WEBHOOK_URL     = os.getenv("WEBHOOK_URL")
 GSA_KEY_B64     = os.getenv("GSA_KEY_B64")
 SHEET_ID        = os.getenv("SHEET_ID")
 API_ID          = os.getenv("API_ID")
@@ -239,7 +239,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return BATCH
     elif query.data == "submit_link":
         await query.message.reply_text(
-            "Please enter the name of the job or internship opportunity:"
+            "Please enter:\n \nName of the job or internship opportunity:"
         )
         return JOB_NAME
     else:
@@ -527,6 +527,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
+            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"),
         ],
         states={
             BATCH: [
@@ -550,8 +551,8 @@ def main():
     )
     application.add_handler(conv_handler)
 
-    # Add callback handler for main menu
-    application.add_handler(CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"))
+    # Add callback handler for batch selection outside of conversation
+    application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
 
     # Add callback handler for admin actions
     application.add_handler(CallbackQueryHandler(admin_action_handler, pattern="^(approve|decline):[0-9]+$"))
@@ -592,7 +593,7 @@ async def job_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["job_name"] = job_name
     
     await update.message.reply_text(
-        "Please enter the link to the job or internship opportunity:"
+        "Please enter:\n \nLink to the job or internship opportunity:"
     )
     return JOB_LINK
 
@@ -734,7 +735,7 @@ async def admin_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         # If approved, send the job/intern link to all users who requested that batch
         if action == "approve":
             # Get all users who requested this batch
-            all_data = await asyncio.to_thread(sheet.get_all_values)
+            all_data = await asyncio.to_thread(current_updates_sheet.get_all_values)
             matching_users = []
             
             for row in all_data[1:]:  # Skip header row
