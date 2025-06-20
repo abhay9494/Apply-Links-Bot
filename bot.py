@@ -553,6 +553,9 @@ def main():
     # Add callback handler for main menu
     application.add_handler(CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"))
 
+    # Add callback handler for batch selection outside of conversation
+    application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
+
     # Add callback handler for admin actions
     application.add_handler(CallbackQueryHandler(admin_action_handler, pattern="^(approve|decline):[0-9]+$"))
     # 4) Initialize the Application (prepares webhook, jobs, etc.)
