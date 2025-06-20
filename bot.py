@@ -527,6 +527,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
+            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"),
         ],
         states={
             BATCH: [
@@ -549,9 +550,6 @@ def main():
         allow_reentry=True,
     )
     application.add_handler(conv_handler)
-
-    # Add callback handler for main menu
-    application.add_handler(CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"))
 
     # Add callback handler for batch selection outside of conversation
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
