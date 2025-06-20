@@ -417,7 +417,37 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, batch):
     cutoff = now_utc - timedelta(days=2)
     found_any = False
 
-    # Read groups.txt
+    # 4.1) Search for approved job/intern links from Job Links sheet
+    try:
+        # Get all approved job links
+        job_links_data = await asyncio.to_thread(job_links_sheet.get_all_values)
+        
+        # Skip header row and filter for approved links matching the batch
+        matching_jobs = []
+        for job in job_links_data[1:]:
+            if len(job) >= 6 and job[4] == batch and job[5] == "approved":
+                job_name = job[2]
+                job_link = job[3]
+                matching_jobs.append((job_name, job_link))
+        
+        # Send matching job links to the user
+        if matching_jobs:
+            await bot.send_message(
+                chat_id,
+                f"📋 Approved Job/Internship Links for batch {batch}:\n"
+            )
+            
+            for job_name, job_link in matching_jobs:
+                await bot.send_message(
+                    chat_id,
+                    f"🔹 {job_name}\n{job_link}"
+                )
+            found_any = True
+            logger.info(f"Sent {len(matching_jobs)} approved job links for batch '{batch}'")
+    except Exception as e:
+        logger.error(f"Failed to fetch approved job links: {e}")
+
+    # 4.2) Read groups.txt
     try:
         with open("groups.txt", encoding="utf-8") as gf:
             group_usernames = [
