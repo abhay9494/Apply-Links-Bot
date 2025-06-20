@@ -647,7 +647,7 @@ async def job_batch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             # Create a unique identifier for this submission
-            row_index = len(await asyncio.to_thread(job_links_sheet.get_all_values))
+            row_index = len(await asyncio.to_thread(job_links_sheet.get_all_values)) - 1
             
             kb = InlineKeyboardMarkup([
                 [
