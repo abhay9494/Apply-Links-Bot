@@ -62,7 +62,6 @@ except ValueError:
 from groq import Groq
 
 # Initialize the Groq Client
-# Note: Groq's client is synchronous by default, but fast enough for this use case.
 ai_client = Groq(api_key=GROQ_API_KEY)
 
 # ─── Write GSA credentials to a temp file ──────────────────────────────────────────
@@ -205,7 +204,7 @@ async def batch_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
     
     await update.message.reply_text(
-        f"Thanks! Batch {batch} noted. I'm scanning recent posts using AI (Groq Llama 3)..."
+        f"Thanks! Batch {batch} noted. I'm scanning recent posts using AI (Groq Llama 3 8B)..."
     )
 
     asyncio.create_task(
@@ -224,7 +223,7 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("select:"):
         batch = data.split(":", 1)[1]
         await query.message.reply_text(
-            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you using AI (Groq Llama 3)..."
+            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you using AI (Groq Llama 3 8B)..."
         )
         asyncio.create_task(
             fetch_and_send_apply_links(context.bot, chat_id, user.full_name, user.username or "", user.id, batch)
@@ -243,7 +242,8 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ─── CORE LOGIC: GROQ AI Filter (DYNAMIC RULES) ────────────────────────────────
 async def filter_messages_with_groq(messages_data, user_batch):
     """
-    Uses Groq (Llama 3) to filter messages based on batch year and job type.
+    Uses Groq (Llama 3.1 8B Instant) to filter messages.
+    High Limits: 14,400 Requests Per Day.
     """
     if not messages_data:
         return []
@@ -302,7 +302,8 @@ async def filter_messages_with_groq(messages_data, user_batch):
                     {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.3-70b-versatile", # Free & Powerful model on Groq
+                # SWITCHED TO 8B INSTANT FOR 14.4k DAILY LIMIT
+                model="llama-3.1-8b-instant", 
                 response_format={"type": "json_object"}
             )
 
@@ -311,7 +312,6 @@ async def filter_messages_with_groq(messages_data, user_batch):
         
         # Parse JSON
         parsed = json.loads(result_text)
-        # Handle cases where LLM returns {"ids": [...]} or just [...]
         if isinstance(parsed, dict) and "ids" in parsed:
             return parsed["ids"]
         elif isinstance(parsed, list):
@@ -402,7 +402,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                 msg_objects[msg.id] = msg
             
             if not candidate_messages:
-                await asyncio.sleep(2) # Short sleep is fine for Groq
+                await asyncio.sleep(2) 
                 continue
 
             logger.info(f"Sending {len(candidate_messages)} messages from @{entity_username} to Groq...")
