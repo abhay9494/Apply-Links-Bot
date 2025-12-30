@@ -480,31 +480,41 @@ def main():
     defaults = Defaults(tzinfo=ZoneInfo("UTC"))
     application = ApplicationBuilder().token(BOT_TOKEN).defaults(defaults).build()
 
+    # ─── CORRECTED CONVERSATION HANDLER ───
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
             CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"),
         ],
         states={
-            BATCH: [CallbackQueryHandler(batch_callback_handler), MessageHandler(filters.TEXT, batch_text_handler)],
-            JOB_NAME: [MessageHandler(filters.TEXT, job_name_handler)],
-            JOB_LINK: [MessageHandler(filters.TEXT, job_link_handler)],
+            BATCH: [
+                CallbackQueryHandler(batch_callback_handler), 
+                MessageHandler(filters.TEXT & ~filters.COMMAND, batch_text_handler)
+            ],
+            JOB_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_name_handler)],
+            JOB_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_link_handler)],
             JOB_BATCH: [CallbackQueryHandler(job_batch_handler)],
         },
         fallbacks=[],
         allow_reentry=True,
-        per_message=True  # FIX: Solves the PTBUserWarning
+        # REMOVED per_message=True to fix /start
     )
     application.add_handler(conv_handler)
+    
+    # Handlers for actions outside the conversation flow
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
     application.add_handler(CallbackQueryHandler(admin_action_handler, pattern="^(approve|decline):"))
 
     loop.run_until_complete(application.initialize())
     
+    # Initialize Telethon
     tele_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     loop.run_until_complete(tele_client.connect())
     
+    # Set Webhook
     loop.run_until_complete(application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}"))
+    
+    # Start Flask
     threading.Thread(target=run_flask, daemon=True).start()
     
     loop.run_forever()
