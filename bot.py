@@ -240,7 +240,7 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         return BATCH
     return BATCH
 
-# ─── CORE LOGIC: Gemini AI Filter (NEW SDK) ──────────────────────────────────────
+# ─── CORE LOGIC: Gemini AI Filter (NEW SDK & MODEL) ──────────────────────────────
 async def filter_messages_with_gemini(messages_data, user_batch):
     if not messages_data:
         return []
@@ -269,7 +269,7 @@ async def filter_messages_with_gemini(messages_data, user_batch):
     try:
         # Use the Async Client (aio)
         response = await ai_client.aio.models.generate_content(
-            model='gemini-1.5-flash-002', # CHANGED: Using specific stable version to avoid 404
+            model='gemini-2.5-flash', # CHANGED: Matched to your screenshot
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -496,6 +496,7 @@ def main():
         },
         fallbacks=[],
         allow_reentry=True
+        # REMOVED per_message=True to ensure /start works
     )
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
