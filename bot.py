@@ -240,36 +240,64 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         return BATCH
     return BATCH
 
-# ─── CORE LOGIC: Gemini AI Filter (NEW SDK & MODEL) ──────────────────────────────
+# ─── CORE LOGIC: Gemini AI Filter (DYNAMIC RULES) ────────────────────────────────
 async def filter_messages_with_gemini(messages_data, user_batch):
     if not messages_data:
         return []
 
     msg_json = json.dumps(messages_data, ensure_ascii=False)
     
+    # ─── Dynamic Logic Calculation ───
+    try:
+        current_year = datetime.now().year
+        batch_year = int(user_batch)
+        
+        # If user graduates in (Current Year + 1) or earlier, they are "Freshers" or "Final Year".
+        # e.g. In Dec 2025: Batch 2025 (Graduated), Batch 2026 (Final Year).
+        # These people NEED SDE 1 / Full Time roles.
+        if batch_year <= current_year + 1:
+             eligibility_rule = """
+             - ACCEPT roles for 'Fresher', 'SDE 1', 'Software Engineer', 'Associate', 'Graduate Trainee'.
+             - ACCEPT roles asking for '0-1 years' or '0 years' experience.
+             - REJECT roles asking for '2+ years' or 'Senior' or 'Lead'.
+             """
+        
+        # If user graduates later (2027, 2028...), they are "Juniors" / "Pre-final".
+        # These people CANNOT take SDE 1 roles yet. They need Internships.
+        else:
+            eligibility_rule = """
+            - REJECT 'SDE 1', 'Full Time', 'Associate' roles.
+            - ACCEPT ONLY 'Intern', 'Internship', 'Summer Intern', 'Trainee'.
+            - REJECT roles mentioning any 'Years of experience' requirements.
+            """
+            
+    except ValueError:
+        # Fallback if batch isn't a number
+        eligibility_rule = "ACCEPT 'Open to all' or 'Any Batch'. REJECT 'Senior' roles."
+
+    # ─── Prompt Construction ───
     prompt = f"""
-    You are a helpful assistant filtering job posts for a student.
+    You are a smart assistant filtering job posts.
     Current User Batch: {user_batch}
     
-    Here is a list of recent Telegram messages (JSON format). 
-    Return a JSON LIST of the 'id's of the messages that are relevant for this user.
+    My Eligibility Rules for this specific batch:
+    {eligibility_rule}
     
-    Rules for Relevance:
-    1. REJECT if the post explicitly mentions a DIFFERENT batch (e.g. if User is 2025, but post says "2026 only").
-    2. ACCEPT if the post mentions "Open to all", "Any Batch", "All students", or has NO batch year mentioned (generic startup/Mercor posts).
-    3. ACCEPT if the post explicitly mentions {user_batch}.
-    4. IGNORE posts that are just conversation/spam and not job opportunities.
+    Universal Rules:
+    1. ACCEPT if the post mentions "Open to all", "Any Batch", "All students".
+    2. ACCEPT if the post explicitly mentions {user_batch}.
+    3. REJECT if the post explicitly mentions a DIFFERENT batch (e.g. User is 2027, post says "2025 only").
+    4. IGNORE posts that are just conversation/spam.
     
-    Messages:
+    Messages to filter:
     {msg_json}
     
-    Return ONLY valid JSON (e.g. [1234, 5678]).
+    Return ONLY valid JSON list of IDs (e.g. [1234, 5678]).
     """
     
     try:
-        # Use the Async Client (aio)
         response = await ai_client.aio.models.generate_content(
-            model='gemini-2.5-flash', # CHANGED: Matched to your screenshot
+            model='gemini-2.5-flash', 
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -496,7 +524,6 @@ def main():
         },
         fallbacks=[],
         allow_reentry=True
-        # REMOVED per_message=True to ensure /start works
     )
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
