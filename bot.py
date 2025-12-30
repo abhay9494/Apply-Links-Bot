@@ -21,7 +21,7 @@ logging.basicConfig(
     level=logging.INFO
 )
 # Silence verbose libraries
-for noisy in ("httpx", "telethon", "apscheduler", "google.genai"):
+for noisy in ("httpx", "telethon", "apscheduler", "groq"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ API_ID          = os.getenv("API_ID")
 API_HASH        = os.getenv("API_HASH")
 SESSION_STRING  = os.getenv("TELETHON_SESSION_STRING")
 ADMIN_ID        = int(os.getenv("ADMIN_ID", 0))
-GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY") 
+GROQ_API_KEY    = os.getenv("GROQ_API_KEY") 
 
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 GROUP_USERNAME   = os.getenv("GROUP_USERNAME")
@@ -48,7 +48,7 @@ if not GSA_KEY_B64: missing.append("GSA_KEY_B64")
 if not SHEET_ID: missing.append("SHEET_ID")
 if not API_ID or not API_HASH: missing.append("API_ID/API_HASH")
 if not SESSION_STRING: missing.append("TELETHON_SESSION_STRING")
-if not GEMINI_API_KEY: missing.append("GEMINI_API_KEY")
+if not GROQ_API_KEY: missing.append("GROQ_API_KEY")
 
 if missing:
     raise RuntimeError(f"Missing environment variable(s): {', '.join(missing)}")
@@ -58,12 +58,12 @@ try:
 except ValueError:
     raise RuntimeError("API_ID must be an integer.")
 
-# ─── NEW: Google Gen AI Setup (google-genai SDK) ────────────────────────────────
-from google import genai
-from google.genai import types
+# ─── GROQ AI Setup ──────────────────────────────────────────────────────────────
+from groq import Groq
 
-# Initialize the new Client
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
+# Initialize the Groq Client
+# Note: Groq's client is synchronous by default, but fast enough for this use case.
+ai_client = Groq(api_key=GROQ_API_KEY)
 
 # ─── Write GSA credentials to a temp file ──────────────────────────────────────────
 creds_bytes = base64.b64decode(GSA_KEY_B64)
@@ -205,7 +205,7 @@ async def batch_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
     
     await update.message.reply_text(
-        f"Thanks! Batch {batch} noted. I'm scanning recent posts using AI..."
+        f"Thanks! Batch {batch} noted. I'm scanning recent posts using AI (Groq Llama 3)..."
     )
 
     asyncio.create_task(
@@ -224,7 +224,7 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("select:"):
         batch = data.split(":", 1)[1]
         await query.message.reply_text(
-            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you using AI..."
+            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you using AI (Groq Llama 3)..."
         )
         asyncio.create_task(
             fetch_and_send_apply_links(context.bot, chat_id, user.full_name, user.username or "", user.id, batch)
@@ -240,8 +240,11 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         return BATCH
     return BATCH
 
-# ─── CORE LOGIC: Gemini AI Filter (DYNAMIC RULES) ────────────────────────────────
-async def filter_messages_with_gemini(messages_data, user_batch):
+# ─── CORE LOGIC: GROQ AI Filter (DYNAMIC RULES) ────────────────────────────────
+async def filter_messages_with_groq(messages_data, user_batch):
+    """
+    Uses Groq (Llama 3) to filter messages based on batch year and job type.
+    """
     if not messages_data:
         return []
 
@@ -252,9 +255,7 @@ async def filter_messages_with_gemini(messages_data, user_batch):
         current_year = datetime.now().year
         batch_year = int(user_batch)
         
-        # If user graduates in (Current Year + 1) or earlier, they are "Freshers" or "Final Year".
-        # e.g. In Dec 2025: Batch 2025 (Graduated), Batch 2026 (Final Year).
-        # These people NEED SDE 1 / Full Time roles.
+        # 2026 cutoff logic (works for 2024, 2025, 2026 as Job Seekers)
         if batch_year <= current_year + 1:
              eligibility_rule = """
              - ACCEPT roles for 'Fresher', 'SDE 1', 'Software Engineer', 'Associate', 'Graduate Trainee'.
@@ -262,8 +263,7 @@ async def filter_messages_with_gemini(messages_data, user_batch):
              - REJECT roles asking for '2+ years' or 'Senior' or 'Lead'.
              """
         
-        # If user graduates later (2027, 2028...), they are "Juniors" / "Pre-final".
-        # These people CANNOT take SDE 1 roles yet. They need Internships.
+        # 2027+ are Internship Seekers
         else:
             eligibility_rule = """
             - REJECT 'SDE 1', 'Full Time', 'Associate' roles.
@@ -272,7 +272,6 @@ async def filter_messages_with_gemini(messages_data, user_batch):
             """
             
     except ValueError:
-        # Fallback if batch isn't a number
         eligibility_rule = "ACCEPT 'Open to all' or 'Any Batch'. REJECT 'Senior' roles."
 
     # ─── Prompt Construction ───
@@ -292,22 +291,36 @@ async def filter_messages_with_gemini(messages_data, user_batch):
     Messages to filter:
     {msg_json}
     
-    Return ONLY valid JSON list of IDs (e.g. [1234, 5678]).
+    Return ONLY a JSON list of IDs like this: {{ "ids": [123, 456] }}
     """
     
     try:
-        response = await ai_client.aio.models.generate_content(
-            model='gemini-2.5-flash', 
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
+        # Run in a separate thread because Groq client is sync
+        def run_groq():
+            return ai_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
+                    {"role": "user", "content": prompt}
+                ],
+                model="llama-3.3-70b-versatile", # Free & Powerful model on Groq
+                response_format={"type": "json_object"}
             )
-        )
+
+        chat_completion = await asyncio.to_thread(run_groq)
+        result_text = chat_completion.choices[0].message.content
         
-        relevant_ids = json.loads(response.text)
-        return relevant_ids
+        # Parse JSON
+        parsed = json.loads(result_text)
+        # Handle cases where LLM returns {"ids": [...]} or just [...]
+        if isinstance(parsed, dict) and "ids" in parsed:
+            return parsed["ids"]
+        elif isinstance(parsed, list):
+            return parsed
+        else:
+            return []
+            
     except Exception as e:
-        logger.error(f"Gemini AI Error: {e}")
+        logger.error(f"Groq AI Error: {e}")
         return []
 
 async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id, batch):
@@ -358,7 +371,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     except Exception as e:
         logger.error(f"Failed to fetch approved job links: {e}")
 
-    # 4) Telethon + Gemini AI Search
+    # 4) Telethon + Groq AI Search
     now_utc = datetime.now(ZoneInfo("UTC"))
     cutoff = now_utc - timedelta(days=2)
     
@@ -389,12 +402,12 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                 msg_objects[msg.id] = msg
             
             if not candidate_messages:
-                await asyncio.sleep(5) 
+                await asyncio.sleep(2) # Short sleep is fine for Groq
                 continue
 
-            logger.info(f"Sending {len(candidate_messages)} messages from @{entity_username} to Gemini...")
+            logger.info(f"Sending {len(candidate_messages)} messages from @{entity_username} to Groq...")
             
-            relevant_ids = await filter_messages_with_gemini(candidate_messages, batch)
+            relevant_ids = await filter_messages_with_groq(candidate_messages, batch)
             
             for msg_id in relevant_ids:
                 if msg_id in msg_objects:
@@ -406,12 +419,12 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                     await bot.send_message(chat_id, prefix + msg.text)
                     total_found += 1
             
-            # Rate Limit Delay: 5 seconds
-            await asyncio.sleep(5)
+            # Rate Limit Delay: Groq is fast, but 3 seconds is polite to Telegram
+            await asyncio.sleep(3)
                     
         except Exception as e:
             logger.error(f"Error processing @{entity_username}: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             continue
 
     if total_found == 0:
@@ -424,7 +437,7 @@ flask_app = Flask(__name__)
 
 @flask_app.route("/", methods=["GET"])
 def index():
-    return "Bot is running with AI."
+    return "Bot is running with Groq AI."
 
 @flask_app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
