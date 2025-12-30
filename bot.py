@@ -62,8 +62,9 @@ except ValueError:
 import google.generativeai as genai
 
 genai.configure(api_key=GEMINI_API_KEY)
-# Using Gemini 2.0 Flash for maximum speed and intelligence
-ai_model = genai.GenerativeModel('gemini-2.0-flash')
+
+# FIX 1: Reverted to 1.5-flash because 2.0 requires billing/has 0 quota for your account.
+ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 # ─── Write GSA credentials to a temp file ──────────────────────────────────────────
 creds_bytes = base64.b64decode(GSA_KEY_B64)
@@ -286,7 +287,8 @@ async def filter_messages_with_gemini(messages_data, user_batch):
         return relevant_ids
     except Exception as e:
         logger.error(f"Gemini AI Error: {e}")
-        # If AI fails, return empty to be safe
+        # If we hit a Rate Limit (429), we might want to wait, but for now just return empty
+        # to avoid crashing the whole bot loop.
         return []
 
 async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id, batch):
@@ -294,7 +296,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     date_str = now.strftime("%d/%m/%Y")
     time_str = now.strftime("%I:%M:%S %p")
 
-    # 1) Append to Google Sheets (Current Updates) - WITH USER ID
+    # 1) Append to Google Sheets
     try:
         await asyncio.to_thread(
             current_updates_sheet.append_row,
@@ -304,7 +306,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     except Exception as e:
         logger.error(f"Failed to append to Current Updates Sheet: {e}")
 
-    # 2) Update Batch sheet - WITH USER ID
+    # 2) Update Batch sheet
     try:
         if username:
             cell = await asyncio.to_thread(batch_sheet.find, username, in_column=2)
@@ -315,7 +317,6 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                     'RAW'
                 )
             else:
-                # Update batch if changed
                 row_idx = cell.row
                 current_batch = await asyncio.to_thread(batch_sheet.cell, row_idx, 4) # Column D
                 if current_batch.value != batch:
@@ -323,7 +324,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     except Exception as e:
         logger.error(f"Failed to update Batch sheet: {e}")
 
-    # 3) Approved Jobs from Sheet (No AI needed here, strict match is fine)
+    # 3) Approved Jobs from Sheet
     try:
         job_links_data = await asyncio.to_thread(job_links_sheet.get_all_values)
         found_approved = False
@@ -337,7 +338,6 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
             
         if not found_approved:
             pass 
-
     except Exception as e:
         logger.error(f"Failed to fetch approved job links: {e}")
 
@@ -345,7 +345,6 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     now_utc = datetime.now(ZoneInfo("UTC"))
     cutoff = now_utc - timedelta(days=2)
     
-    # Read groups
     try:
         with open("groups.txt", encoding="utf-8") as gf:
             group_usernames = [line.strip().split("/")[-1] for line in gf if line.strip() and not line.strip().startswith("#")]
@@ -358,31 +357,31 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
         try:
             entity = await tele_client.get_entity(entity_username)
             
-            # Step A: Collect Candidate Messages
-            candidate_messages = [] # List of dicts
-            msg_objects = {} # Map ID -> Message Object for sending later
+            candidate_messages = [] 
+            msg_objects = {} 
             
             async for msg in tele_client.iter_messages(entity, limit=200):
                 if not msg.text: continue
                 if msg.date.astimezone(ZoneInfo("UTC")) < cutoff: continue
-                
-                # Pre-cleaning: Skip very short messages to save AI tokens
                 if len(msg.text) < 10: continue
 
                 candidate_messages.append({
                     "id": msg.id,
-                    "text": msg.text[:1000] # Truncate massive texts to save tokens
+                    "text": msg.text[:1000] 
                 })
                 msg_objects[msg.id] = msg
             
             if not candidate_messages:
+                # FIX 2: Even if no messages, we MUST sleep to prevent looping too fast to the next group
+                await asyncio.sleep(5) 
                 continue
 
-            # Step B: Send to Gemini AI
             logger.info(f"Sending {len(candidate_messages)} messages from @{entity_username} to Gemini...")
+            
+            # Call AI
             relevant_ids = await filter_messages_with_gemini(candidate_messages, batch)
             
-            # Step C: Send Approved Messages
+            # Send results
             for msg_id in relevant_ids:
                 if msg_id in msg_objects:
                     msg = msg_objects[msg_id]
@@ -390,12 +389,16 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                     prefix = post_date_ist.strftime(
                         f"📢 **Found in @{entity_username}**\n🗓 {date_str} at %I:%M %p\n\n"
                     )
-                    # Send text (max 4096 chars)
                     await bot.send_message(chat_id, prefix + msg.text)
                     total_found += 1
+            
+            # FIX 2: Rate Limit Delay - Sleep 5 seconds after every AI Call to respect the Free Tier limits
+            await asyncio.sleep(5)
                     
         except Exception as e:
             logger.error(f"Error processing @{entity_username}: {e}")
+            # Even on error, sleep before next iteration to be safe
+            await asyncio.sleep(5)
             continue
 
     if total_found == 0:
@@ -443,7 +446,6 @@ async def job_batch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         job_link = context.user_data.get("job_link", "")
         user = query.from_user
         
-        # Save to sheet
         try:
             await asyncio.to_thread(
                 job_links_sheet.append_row,
@@ -451,7 +453,6 @@ async def job_batch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'RAW'
             )
             
-            # Notify Admin
             row_index = len(await asyncio.to_thread(job_links_sheet.get_all_values)) - 1
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("Approve", callback_data=f"approve:{row_index}"),
@@ -480,7 +481,6 @@ async def admin_action_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     status = "approved" if action == "approve" else "declined"
     
     try:
-        # Update Status column (F = 6)
         await asyncio.to_thread(job_links_sheet.update_cell, row_idx + 1, 6, status)
         await query.message.edit_text(f"Submission has been **{status}**.")
     except Exception as e:
