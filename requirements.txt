@@ -6,4 +6,4 @@ pytz
 tzlocal
 apscheduler
 Flask>=2.0
-google-genai
+groq
