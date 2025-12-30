@@ -269,7 +269,7 @@ async def filter_messages_with_gemini(messages_data, user_batch):
     try:
         # Use the Async Client (aio)
         response = await ai_client.aio.models.generate_content(
-            model='gemini-1.5-flash', # Using 1.5 Flash as it is stable on Free Tier
+            model='gemini-1.5-flash-002', # CHANGED: Using specific stable version to avoid 404
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json"
@@ -480,7 +480,6 @@ def main():
     defaults = Defaults(tzinfo=ZoneInfo("UTC"))
     application = ApplicationBuilder().token(BOT_TOKEN).defaults(defaults).build()
 
-    # ─── CORRECTED CONVERSATION HANDLER ───
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
@@ -496,25 +495,18 @@ def main():
             JOB_BATCH: [CallbackQueryHandler(job_batch_handler)],
         },
         fallbacks=[],
-        allow_reentry=True,
-        # REMOVED per_message=True to fix /start
+        allow_reentry=True
     )
     application.add_handler(conv_handler)
-    
-    # Handlers for actions outside the conversation flow
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
     application.add_handler(CallbackQueryHandler(admin_action_handler, pattern="^(approve|decline):"))
 
     loop.run_until_complete(application.initialize())
     
-    # Initialize Telethon
     tele_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     loop.run_until_complete(tele_client.connect())
     
-    # Set Webhook
     loop.run_until_complete(application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}"))
-    
-    # Start Flask
     threading.Thread(target=run_flask, daemon=True).start()
     
     loop.run_forever()
