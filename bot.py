@@ -20,8 +20,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-# Silence overly‐verbose libraries
-for noisy in ("httpx", "telethon", "apscheduler", "google.ai.generativelanguage"):
+# Silence verbose libraries
+for noisy in ("httpx", "telethon", "apscheduler", "google.genai"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
@@ -58,13 +58,12 @@ try:
 except ValueError:
     raise RuntimeError("API_ID must be an integer.")
 
-# ─── Google Gemini Setup ──────────────────────────────────────────────────────────
-import google.generativeai as genai
+# ─── NEW: Google Gen AI Setup (google-genai SDK) ────────────────────────────────
+from google import genai
+from google.genai import types
 
-genai.configure(api_key=GEMINI_API_KEY)
-
-# FIX 1: Reverted to 1.5-flash because 2.0 requires billing/has 0 quota for your account.
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
+# Initialize the new Client
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 # ─── Write GSA credentials to a temp file ──────────────────────────────────────────
 creds_bytes = base64.b64decode(GSA_KEY_B64)
@@ -90,7 +89,7 @@ try:
 except gspread.exceptions.WorksheetNotFound:
     current_updates_sheet = sh.add_worksheet(title=current_updates_worksheet_title, rows="1000", cols="6")
 
-# Ensure header row (Added User ID column)
+# Ensure header row
 try:
     current_updates_sheet.update(
         values=[["Name", "Username", "User ID", "Batch", "Date", "Time"]],
@@ -188,7 +187,6 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     if query.data == "get_links":
-        # Direct to batch selection (removed Force Join check)
         await query.message.reply_text(
             "Please select your Batch Year (Graduation Year):",
             reply_markup=get_batch_keyboard(INITIAL_START_YEAR)
@@ -242,22 +240,15 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         return BATCH
     return BATCH
 
-# ─── CORE LOGIC: Gemini AI Filter ────────────────────────────────────────────────
+# ─── CORE LOGIC: Gemini AI Filter (NEW SDK) ──────────────────────────────────────
 async def filter_messages_with_gemini(messages_data, user_batch):
-    """
-    Sends a batch of messages to Gemini to determine relevance.
-    messages_data: list of dicts [{'id': 123, 'text': '...'}, ...]
-    Returns: List of IDs that are RELEVANT.
-    """
     if not messages_data:
         return []
 
-    # Construct a clean JSON-like string for the prompt
     msg_json = json.dumps(messages_data, ensure_ascii=False)
     
     prompt = f"""
     You are a helpful assistant filtering job posts for a student.
-    
     Current User Batch: {user_batch}
     
     Here is a list of recent Telegram messages (JSON format). 
@@ -265,7 +256,7 @@ async def filter_messages_with_gemini(messages_data, user_batch):
     
     Rules for Relevance:
     1. REJECT if the post explicitly mentions a DIFFERENT batch (e.g. if User is 2025, but post says "2026 only").
-    2. ACCEPT if the post mentions "Open to all", "Any Batch", "All students", or has NO batch year mentioned at all (e.g. generic startup/Mercor posts).
+    2. ACCEPT if the post mentions "Open to all", "Any Batch", "All students", or has NO batch year mentioned (generic startup/Mercor posts).
     3. ACCEPT if the post explicitly mentions {user_batch}.
     4. IGNORE posts that are just conversation/spam and not job opportunities.
     
@@ -276,19 +267,19 @@ async def filter_messages_with_gemini(messages_data, user_batch):
     """
     
     try:
-        # Generate content
-        response = await ai_model.generate_content_async(
-            prompt,
-            generation_config={"response_mime_type": "application/json"}
+        # Use the Async Client (aio)
+        response = await ai_client.aio.models.generate_content(
+            model='gemini-1.5-flash', # Using 1.5 Flash as it is stable on Free Tier
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json"
+            )
         )
         
-        # Parse result
         relevant_ids = json.loads(response.text)
         return relevant_ids
     except Exception as e:
         logger.error(f"Gemini AI Error: {e}")
-        # If we hit a Rate Limit (429), we might want to wait, but for now just return empty
-        # to avoid crashing the whole bot loop.
         return []
 
 async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id, batch):
@@ -318,7 +309,7 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                 )
             else:
                 row_idx = cell.row
-                current_batch = await asyncio.to_thread(batch_sheet.cell, row_idx, 4) # Column D
+                current_batch = await asyncio.to_thread(batch_sheet.cell, row_idx, 4)
                 if current_batch.value != batch:
                     await asyncio.to_thread(batch_sheet.update_cell, row_idx, 4, batch)
     except Exception as e:
@@ -331,11 +322,9 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
         if len(job_links_data) > 1:
             await bot.send_message(chat_id, f"📋 **Verified Links for {batch}:**", parse_mode="Markdown")
             for job in job_links_data[1:]:
-                # job: [Name, Username, JobName, Link, Batch, Status, Date]
                 if len(job) >= 6 and job[4] == batch and job[5] == "approved":
                     await bot.send_message(chat_id, f"🔹 {job[2]}\n{job[3]}")
                     found_approved = True
-            
         if not found_approved:
             pass 
     except Exception as e:
@@ -372,16 +361,13 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                 msg_objects[msg.id] = msg
             
             if not candidate_messages:
-                # FIX 2: Even if no messages, we MUST sleep to prevent looping too fast to the next group
                 await asyncio.sleep(5) 
                 continue
 
             logger.info(f"Sending {len(candidate_messages)} messages from @{entity_username} to Gemini...")
             
-            # Call AI
             relevant_ids = await filter_messages_with_gemini(candidate_messages, batch)
             
-            # Send results
             for msg_id in relevant_ids:
                 if msg_id in msg_objects:
                     msg = msg_objects[msg_id]
@@ -392,12 +378,11 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
                     await bot.send_message(chat_id, prefix + msg.text)
                     total_found += 1
             
-            # FIX 2: Rate Limit Delay - Sleep 5 seconds after every AI Call to respect the Free Tier limits
+            # Rate Limit Delay: 5 seconds
             await asyncio.sleep(5)
                     
         except Exception as e:
             logger.error(f"Error processing @{entity_username}: {e}")
-            # Even on error, sleep before next iteration to be safe
             await asyncio.sleep(5)
             continue
 
@@ -507,7 +492,8 @@ def main():
             JOB_BATCH: [CallbackQueryHandler(job_batch_handler)],
         },
         fallbacks=[],
-        allow_reentry=True
+        allow_reentry=True,
+        per_message=True  # FIX: Solves the PTBUserWarning
     )
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
