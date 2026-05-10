@@ -26,19 +26,16 @@ for noisy in ("httpx", "telethon", "apscheduler", "groq"):
 logger = logging.getLogger(__name__)
 
 # ─── Required ENV VARs ─────────────────────────────────────────────────────────────
-BOT_TOKEN       = os.getenv("BOT_TOKEN")
-WEBHOOK_URL     = os.getenv("WEBHOOK_URL")
-GSA_KEY_B64     = os.getenv("GSA_KEY_B64")
-SHEET_ID        = os.getenv("SHEET_ID")
-API_ID          = os.getenv("API_ID")
-API_HASH        = os.getenv("API_HASH")
-SESSION_STRING  = os.getenv("TELETHON_SESSION_STRING")
-ADMIN_ID        = int(os.getenv("ADMIN_ID", 0))
-GROQ_API_KEY    = os.getenv("GROQ_API_KEY") 
-
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
-GROUP_USERNAME   = os.getenv("GROUP_USERNAME")
-OWNER_USERNAME   = os.getenv("OWNER_USERNAME")
+BOT_TOKEN               = os.getenv("BOT_TOKEN")
+WEBHOOK_URL             = os.getenv("WEBHOOK_URL")
+GSA_KEY_B64             = os.getenv("GSA_KEY_B64")
+SHEET_ID                = os.getenv("SHEET_ID")
+API_ID                  = os.getenv("API_ID")
+API_HASH                = os.getenv("API_HASH")
+TELETHON_SESSION_STRING = os.getenv("TELETHON_SESSION_STRING")
+SESSION_NAME            = os.getenv("SESSION_NAME", "my_bot_session")
+GROQ_API_KEY            = os.getenv("GROQ_API_KEY") 
+OWNER_USERNAME          = os.getenv("OWNER_USERNAME", "@owner")
 
 # ─── Validation ───────────────────────────────────────────────────────────────────
 missing = []
@@ -47,7 +44,7 @@ if not WEBHOOK_URL: missing.append("WEBHOOK_URL")
 if not GSA_KEY_B64: missing.append("GSA_KEY_B64")
 if not SHEET_ID: missing.append("SHEET_ID")
 if not API_ID or not API_HASH: missing.append("API_ID/API_HASH")
-if not SESSION_STRING: missing.append("TELETHON_SESSION_STRING")
+if not TELETHON_SESSION_STRING and not SESSION_NAME: missing.append("TELETHON_SESSION_STRING or SESSION_NAME")
 if not GROQ_API_KEY: missing.append("GROQ_API_KEY")
 
 if missing:
@@ -302,7 +299,6 @@ async def filter_messages_with_groq(messages_data, user_batch):
                     {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                # SWITCHED TO 8B INSTANT FOR 14.4k DAILY LIMIT
                 model="llama-3.1-8b-instant", 
                 response_format={"type": "json_object"}
             )
@@ -473,45 +469,19 @@ async def job_batch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = query.from_user
         
         try:
+            # Add to sheet as pending. Admin/Owner must review manually in Sheets now.
             await asyncio.to_thread(
                 job_links_sheet.append_row,
                 [user.full_name, user.username or "", job_name, job_link, batch, "pending", datetime.now(ist).strftime("%d/%m/%Y")],
                 'RAW'
             )
             
-            row_index = len(await asyncio.to_thread(job_links_sheet.get_all_values)) - 1
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Approve", callback_data=f"approve:{row_index}"),
-                 InlineKeyboardButton("Decline", callback_data=f"decline:{row_index}")]
-            ])
-            await context.bot.send_message(
-                ADMIN_ID, 
-                f"📝 **New Submission**\nFrom: {user.full_name}\nJob: {job_name}\nBatch: {batch}\nLink: {job_link}",
-                reply_markup=kb, parse_mode="Markdown"
-            )
-            await query.message.reply_text("✅ Submitted for approval!")
+            await query.message.reply_text(f"✅ Submitted successfully! Please wait for {OWNER_USERNAME} to review it in the sheets.")
         except Exception:
             await query.message.reply_text("❌ Error submitting. Try again.")
             
         return ConversationHandler.END
     return JOB_BATCH
-
-async def admin_action_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id != ADMIN_ID: return
-
-    action, row_str = query.data.split(":")
-    row_idx = int(row_str)
-    
-    status = "approved" if action == "approve" else "declined"
-    
-    try:
-        await asyncio.to_thread(job_links_sheet.update_cell, row_idx + 1, 6, status)
-        await query.message.edit_text(f"Submission has been **{status}**.")
-    except Exception as e:
-        logger.error(f"Admin action failed: {e}")
-        await query.message.edit_text("Failed to update sheet.")
 
 def main():
     global loop, application, tele_client
@@ -540,11 +510,12 @@ def main():
     )
     application.add_handler(conv_handler)
     application.add_handler(CallbackQueryHandler(batch_callback_handler, pattern="^(select:|page:)"))
-    application.add_handler(CallbackQueryHandler(admin_action_handler, pattern="^(approve|decline):"))
 
     loop.run_until_complete(application.initialize())
     
-    tele_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    # Attempt to use StringSession first, fallback to SESSION_NAME
+    session_data = StringSession(TELETHON_SESSION_STRING) if TELETHON_SESSION_STRING else SESSION_NAME
+    tele_client = TelegramClient(session_data, API_ID, API_HASH)
     loop.run_until_complete(tele_client.connect())
     
     loop.run_until_complete(application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}"))
