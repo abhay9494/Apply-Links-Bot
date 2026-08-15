@@ -198,9 +198,16 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "submit_link":
         await query.message.reply_text("Please enter:\n\nName of the job or internship opportunity:")
         return JOB_NAME
-    elif query.data == "contact_admin":
-        await query.message.reply_text("Please type your message for the admin. I will forward it directly to them:")
-        return CONTACT_ADMIN
+    elif query.data == "restart":
+        admin_id = os.getenv("ADMIN_ID")
+        admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("Get Apply Links", callback_data="get_links")],
+            [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")],
+            [InlineKeyboardButton("Contact Admin", url=admin_url)]
+        ])
+        await query.message.reply_text("Welcome! Choose an option below:", reply_markup=kb)
+        return ConversationHandler.END
     else:
         await query.message.reply_text("Invalid option.")
         return ConversationHandler.END
@@ -437,10 +444,17 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
             await asyncio.sleep(3)
             continue
 
+    admin_id = os.getenv("ADMIN_ID")
+    admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
+    end_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Restart", callback_data="restart")],
+        [InlineKeyboardButton("👤 Contact Admin", url=admin_url)]
+    ])
+
     if total_found == 0:
-        await bot.send_message(chat_id, f"No recent posts found specifically for batch {batch} (or open-to-all).")
+        await bot.send_message(chat_id, f"No recent posts found specifically for batch {batch} (or open-to-all).", reply_markup=end_kb)
     else:
-        await bot.send_message(chat_id, "✅ That's all the relevant updates I found!")
+        await bot.send_message(chat_id, "✅ That's all the relevant updates I found!", reply_markup=end_kb)
 
 # ─── Flask app ──────────────────────────────────────────────────────────────────
 flask_app = Flask(__name__)
@@ -533,7 +547,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
-            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link|contact_admin)$"),
+            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link|restart)$"),
         ],
         states={
             BATCH: [
