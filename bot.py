@@ -148,6 +148,7 @@ BATCH = 1
 JOB_NAME = 2
 JOB_LINK = 3
 JOB_BATCH = 4
+CONTACT_ADMIN = 5
 
 INITIAL_START_YEAR = 2021
 
@@ -174,7 +175,8 @@ def get_batch_keyboard(start_year: int) -> InlineKeyboardMarkup:
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Get Apply Links", callback_data="get_links")],
-        [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")]
+        [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")],
+        [InlineKeyboardButton("Contact Admin", callback_data="contact_admin")]
     ])
     await update.message.reply_text("Welcome! Choose an option below:", reply_markup=kb)
 
@@ -191,6 +193,9 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "submit_link":
         await query.message.reply_text("Please enter:\n\nName of the job or internship opportunity:")
         return JOB_NAME
+    elif query.data == "contact_admin":
+        await query.message.reply_text("Please type your message for the admin. I will forward it directly to them:")
+        return CONTACT_ADMIN
     else:
         await query.message.reply_text("Invalid option.")
         return ConversationHandler.END
@@ -487,6 +492,31 @@ async def job_batch_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     return JOB_BATCH
 
+async def contact_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = os.getenv("ADMIN_ID")
+    if not admin_id:
+        await update.message.reply_text("Admin contact is currently unavailable.")
+        return ConversationHandler.END
+
+    user_message = update.message.text
+    user = update.effective_user
+    
+    # Show username if they have one, otherwise show their ID
+    username_str = f"(@{user.username})" if user.username else f"(ID: {user.id})"
+    
+    forward_text = f"📩 **New Message for Admin**\nFrom: {user.full_name} {username_str}\n\n{user_message}"
+    
+    try:
+        # Send the message to YOU
+        await context.bot.send_message(chat_id=admin_id, text=forward_text, parse_mode="Markdown")
+        # Tell the user it succeeded
+        await update.message.reply_text("✅ Your message has been successfully sent to the admin.")
+    except Exception as e:
+        logger.error(f"Failed to forward message to admin: {e}")
+        await update.message.reply_text("❌ Failed to send message. Please try again later.")
+        
+    return ConversationHandler.END
+
 def main():
     global loop, application, tele_client
     loop = asyncio.new_event_loop()
@@ -498,7 +528,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start_handler),
-            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link)$"),
+            CallbackQueryHandler(menu_handler, pattern="^(get_links|submit_link|contact_admin)$"),
         ],
         states={
             BATCH: [
@@ -508,6 +538,7 @@ def main():
             JOB_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_name_handler)],
             JOB_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, job_link_handler)],
             JOB_BATCH: [CallbackQueryHandler(job_batch_handler)],
+            CONTACT_ADMIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, contact_admin_handler)],
         },
         fallbacks=[],
         allow_reentry=True
