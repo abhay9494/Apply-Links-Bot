@@ -36,6 +36,7 @@ TELETHON_SESSION_STRING = os.getenv("TELETHON_SESSION_STRING")
 SESSION_NAME            = os.getenv("SESSION_NAME", "my_bot_session")
 GROQ_API_KEY            = os.getenv("GROQ_API_KEY") 
 OWNER_USERNAME          = os.getenv("OWNER_USERNAME", "@owner")
+ADMIN_ID                = os.getenv("ADMIN_ID")
 
 # ─── Validation ───────────────────────────────────────────────────────────────────
 missing = []
@@ -173,10 +174,14 @@ def get_batch_keyboard(start_year: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = os.getenv("ADMIN_ID")
+    
+    # Create the special Telegram URL that opens your profile
+    admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Get Apply Links", callback_data="get_links")],
         [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")],
-        [InlineKeyboardButton("Contact Admin", callback_data="contact_admin")]
+        [InlineKeyboardButton("Contact Admin", url=admin_url)]
     ])
     await update.message.reply_text("Welcome! Choose an option below:", reply_markup=kb)
 
