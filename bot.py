@@ -201,7 +201,7 @@ async def batch_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
     
     await update.message.reply_text(
-        f"Thanks! Batch {batch} noted. I'm scanning recent posts using AI (Groq Llama 3 8B)..."
+        f"Thanks! Batch {batch} noted. I'm scanning recent posts for you..."
     )
 
     asyncio.create_task(
@@ -220,7 +220,7 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     if data.startswith("select:"):
         batch = data.split(":", 1)[1]
         await query.message.reply_text(
-            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you using AI (Groq Llama 3 8B)..."
+            f"Thanks! Batch {batch} noted. I'm scanning recent posts for you..."
         )
         asyncio.create_task(
             fetch_and_send_apply_links(context.bot, chat_id, user.full_name, user.username or "", user.id, batch)
@@ -370,6 +370,10 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
     # 4) Telethon + Groq AI Search
     now_utc = datetime.now(ZoneInfo("UTC"))
     cutoff = now_utc - timedelta(days=2)
+
+    if not tele_client.is_connected():
+        logger.info("Telethon disconnected. Attempting to reconnect...")
+        await tele_client.connect()
     
     try:
         with open("groups.txt", encoding="utf-8") as gf:
