@@ -290,22 +290,23 @@ async def filter_messages_with_groq(messages_data, user_batch):
 
     # ─── Prompt Construction ───
     prompt = f"""
-    You are a smart assistant filtering job posts.
-    Current User Batch: {user_batch}
+    You are a strict data extraction assistant. Your job is to filter job posts for a student graduating in the year: {user_batch}.
     
-    My Eligibility Rules for this specific batch:
+    CRITICAL BATCH RULES:
+    - If the post says "Batch {user_batch}", ACCEPT IT.
+    - If the post mentions ANY OTHER YEAR (like 2024, 2025, 2026, 2028) and DOES NOT mention {user_batch}, YOU MUST REJECT IT. 
+    - If the post says "Open to all", "Any Batch", or "Multiple Batches", ACCEPT IT.
+    
+    ROLE RULES:
     {eligibility_rule}
     
-    Universal Rules:
-    1. ACCEPT if the post mentions "Open to all", "Any Batch", "All students".
-    2. ACCEPT if the post explicitly mentions {user_batch}.
-    3. REJECT if the post explicitly mentions a DIFFERENT batch (e.g. User is 2027, post says "2025 only").
-    4. IGNORE posts that are just conversation/spam.
+    INSTRUCTIONS:
+    Analyze the text of each message carefully. If a message contains a different year and not {user_batch}, it is an automatic rejection. Ignore spam.
     
     Messages to filter:
     {msg_json}
     
-    Return ONLY a JSON list of IDs like this: {{ "ids": [123, 456] }}
+    Return ONLY a valid JSON object containing a single key "ids" mapped to a list of integers representing the approved message IDs. Example: {{ "ids": [123, 456] }}
     """
     
     try:
@@ -316,7 +317,7 @@ async def filter_messages_with_groq(messages_data, user_batch):
                     {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-4-scout", 
+                model="openai/gpt-oss-120b",
                 response_format={"type": "json_object"}
             )
 
