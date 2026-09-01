@@ -174,10 +174,10 @@ def get_batch_keyboard(start_year: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = os.getenv("ADMIN_ID")
+    admin_id = os.getenv("ADMIN_ID", "").strip()
     
-    # Create the special Telegram URL that opens your profile
-    admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
+    # Safely build URL only if ID is a valid number, otherwise fallback to prevent crash
+    admin_url = f"tg://user?id={admin_id}" if admin_id.isdigit() else "https://t.me/"
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("Get Apply Links", callback_data="get_links")],
         [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")],
@@ -199,8 +199,8 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("Please enter:\n\nName of the job or internship opportunity:")
         return JOB_NAME
     elif query.data == "restart":
-        admin_id = os.getenv("ADMIN_ID")
-        admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
+        admin_id = os.getenv("ADMIN_ID", "").strip()
+        admin_url = f"tg://user?id={admin_id}" if admin_id.isdigit() else "https://t.me/"
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Get Apply Links", callback_data="get_links")],
             [InlineKeyboardButton("Submit Job/Intern Link", callback_data="submit_link")],
@@ -316,7 +316,7 @@ async def filter_messages_with_groq(messages_data, user_batch):
                     {"role": "system", "content": "You are a helpful assistant. Output valid JSON only."},
                     {"role": "user", "content": prompt}
                 ],
-                model="llama-3.3-70b-versatile", 
+                model="llama-3.1-70b-versatile", 
                 response_format={"type": "json_object"}
             )
 
@@ -444,8 +444,8 @@ async def fetch_and_send_apply_links(bot, chat_id, full_name, username, user_id,
             await asyncio.sleep(3)
             continue
 
-    admin_id = os.getenv("ADMIN_ID")
-    admin_url = f"tg://user?id={admin_id}" if admin_id else "https://t.me/"
+    admin_id = os.getenv("ADMIN_ID", "").strip()
+    admin_url = f"tg://user?id={admin_id}" if admin_id.isdigit() else "https://t.me/"
     end_kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Restart", callback_data="restart")],
         [InlineKeyboardButton("👤 Contact Admin", url=admin_url)]
