@@ -256,8 +256,8 @@ async def batch_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 # ─── CORE LOGIC: GROQ AI Filter (DYNAMIC RULES) ────────────────────────────────
 async def filter_messages_with_groq(messages_data, user_batch):
     """
-    Uses Groq (Llama 3.1 8B Instant) to filter messages.
-    High Limits: 14,400 Requests Per Day.
+    Uses an LLM through the Groq API (openai/gpt-oss-120b, JSON mode) to keep only the
+    messages that fit the student's batch. Returns the ids of the messages to send.
     """
     if not messages_data:
         return []
